@@ -1,20 +1,35 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local StockFolder = ReplicatedStorage:WaitForChild("StockFolder")
+local seedRemote = ReplicatedStorage:FindFirstChild("Give_Seed")
+local gearRemote = ReplicatedStorage:FindFirstChild("Give_Gear")
 
-local function notify(text)
+if seedRemote then
+    seedRemote:FireServer("AppleSeed", 1)
     game.StarterGui:SetCore("SendNotification", {
-        Title = "Stok Item",
-        Text = text,
-        Duration = 4
+        Title = "Coba Beli",
+        Text = "Coba beli AppleSeed via Give_Seed",
+        Duration = 5
+    })
+else
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "Gagal",
+        Text = "Remote Give_Seed tidak ditemukan!",
+        Duration = 5
     })
 end
 
-for _, category in ipairs(StockFolder:GetChildren()) do
-    for _, item in ipairs(category:GetChildren()) do
-        local stock = item:FindFirstChild("Stock")
-        if stock then
-            notify(item.Name .. ": " .. stock.Value)
-            wait(0.5)
-        end
-    end
+wait(3)
+
+if gearRemote then
+    gearRemote:FireServer("SprinklerBasic", 1)
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "Coba Beli",
+        Text = "Coba beli SprinklerBasic via Give_Gear",
+        Duration = 5
+    })
+else
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "Gagal",
+        Text = "Remote Give_Gear tidak ditemukan!",
+        Duration = 5
+    })
 end
