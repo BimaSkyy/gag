@@ -1,143 +1,170 @@
--- Grow a Garden Auto-Buy UI with Bulk Purchase
--- Author: AkunMl + ChatGPT
+-- Grow A Garden Auto Buy Script with ImGui by ChatGPT (v2)
+-- Feature: Buy all seed or specific, elegant UI, gear support, log display
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local InsertService = game:GetService("InsertService")
-local HttpService = game:GetService("HttpService")
 local PlayerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
--- Load Dear ReGui
-local ReGui = loadstring(game:HttpGet("https://raw.githubusercontent.com/depthso/Dear-ReGui/refs/heads/main/ReGui.lua"))()
-local PrefabsId = "rbxassetid://" .. ReGui.PrefabsId
-ReGui:Init({
-	Prefabs = InsertService:LoadLocalAsset(PrefabsId)
-})
+local BuySeedRemote = ReplicatedStorage.GameEvents:WaitForChild("BuySeedStock")
+local BuyGearRemote = ReplicatedStorage.GameEvents:WaitForChild("BuyGearStock")
 
--- Tema
-ReGui:DefineTheme("BuyTheme", {
-	WindowBg = Color3.fromRGB(25, 25, 25),
-	TitleBarBg = Color3.fromRGB(34, 139, 34),
-	TitleBarBgActive = Color3.fromRGB(60, 179, 113),
-	ResizeGrab = Color3.fromRGB(34, 139, 34),
-	FrameBg = Color3.fromRGB(34, 139, 34),
-	CollapsingHeaderBg = Color3.fromRGB(46, 204, 113),
-	ButtonsBg = Color3.fromRGB(46, 204, 113),
-	CheckMark = Color3.fromRGB(255, 255, 255),
-	SliderGrab = Color3.fromRGB(255, 255, 255)
-})
+local ImGui = loadstring(game:HttpGet("https://raw.githubusercontent.com/depthso/Dear-ReGui/main/ReGui.lua"))()
+local PrefabId = "rbxassetid://17033442463"
+ImGui:Init({ Prefabs = game:GetObjects(PrefabId)[1] })
 
--- Remote
-local BuySeedRemote = ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("BuySeedStock")
+local Window = ImGui:Window({ Title = "Auto Buyer", Size = UDim2.fromOffset(250, 160) })
+local ShowSeedList = false
+local ShowGearList = false
 
--- Storage
-local SelectedSeeds = {}
-local AutoBuy = false
-local BuyAll = false
+local BuyAllSeed = false
+local BuySpecificSeed = false
+local BuyAllGear = false
+local BuySpecificGear = false
+local SeedCheckboxes = {}
+local GearCheckboxes = {}
+local AutoBuyRunning = false
+local LogMessages = {}
 
--- UI Window
-local Window = ReGui:Window({
-	Title = "Auto Buy Seeds 🌱",
-	Theme = "BuyTheme",
-	Size = UDim2.fromOffset(250, 200),
-	Collapsible = true
-})
-
--- Checkbox seed list
-local function GetSeedStockList()
-	local ShopUI = PlayerGui:FindFirstChild("Seed_Shop")
-	if not ShopUI then return {} end
-
-	local Root = ShopUI:FindFirstChild("Blueberry", true)
-	if not Root then return {} end
-
-	local stockList = {}
-	for _, item in pairs(Root.Parent:GetChildren()) do
-		local Main = item:FindFirstChild("Main_Frame")
-		if Main and Main:FindFirstChild("Stock_Text") then
-			local stock = tonumber(Main.Stock_Text.Text:match("%d+")) or 0
-			stockList[item.Name] = stock
-		end
-	end
-	return stockList
+function NotifyLog(text)
+    table.insert(LogMessages, 1, text)
+    if #LogMessages > 10 then table.remove(LogMessages, #LogMessages) end
 end
 
--- Buy seed immediately
-local function BuyAllSeeds()
-	local seeds = GetSeedStockList()
-	for name, count in pairs(seeds) do
-		if count > 0 then
-			for i = 1, count do
-				BuySeedRemote:FireServer(name)
-			end
-		end
-	end
+function GetStockList(category)
+    local Shop = PlayerGui:FindFirstChild(category)
+    if not Shop then return {} end
+    local Ref = Shop:FindFirstChild("Blueberry", true) or Shop:FindFirstChild("Basic_Sprinkler", true)
+    if not Ref then return {} end
+
+    local stockList = {}
+    for _, item in pairs(Ref.Parent:GetChildren()) do
+        local Main = item:FindFirstChild("Main_Frame")
+        if Main and Main:FindFirstChild("Stock_Text") then
+            local count = tonumber(Main.Stock_Text.Text:match("%d+")) or 0
+            stockList[item.Name] = count
+        end
+    end
+    return stockList
 end
 
--- Buy selected only
-local function BuySelectedSeeds()
-	local seeds = GetSeedStockList()
-	for name, count in pairs(seeds) do
-		if count > 0 and SelectedSeeds[name] then
-			for i = 1, count do
-				BuySeedRemote:FireServer(name)
-			end
-		end
-	end
+function BuyAllItems(category, remote)
+    local stockList = GetStockList(category)
+    for name, count in pairs(stockList) do
+        if count > 0 then
+            for _ = 1, count do
+                remote:FireServer(name)
+            end
+            NotifyLog("Bought ALL of " .. name)
+        end
+    end
 end
 
--- UI Build
-Window:Checkbox({
-	Label = "Buy All Seeds",
-	Value = BuyAll,
-	Callback = function(_, value)
-		BuyAll = value
-	end
-})
+function BuySpecific(category, remote, checks)
+    local stockList = GetStockList(category)
+    for name, count in pairs(stockList) do
+        if checks[name] and count > 0 then
+            for _ = 1, count do
+                remote:FireServer(name)
+            end
+            NotifyLog("Bought specific: " .. name)
+        end
+    end
+end
 
-Window:Checkbox({
-	Label = "Auto Buy Enabled",
-	Value = AutoBuy,
-	Callback = function(_, value)
-		AutoBuy = value
-	end
-})
+function StartLoop()
+    if AutoBuyRunning then return end
+    AutoBuyRunning = true
+    coroutine.wrap(function()
+        while AutoBuyRunning do
+            if BuyAllSeed then BuyAllItems("Seed_Shop", BuySeedRemote) end
+            if BuySpecificSeed then BuySpecific("Seed_Shop", BuySeedRemote, SeedCheckboxes) end
+            if BuyAllGear then BuyAllItems("Gear_Shop", BuyGearRemote) end
+            if BuySpecificGear then BuySpecific("Gear_Shop", BuyGearRemote, GearCheckboxes) end
+            wait(2.5)
+        end
+    end)()
+end
 
-Window:Separator({Text = "Choose Seeds"})
+function StopLoop()
+    AutoBuyRunning = false
+end
 
--- Dynamic seed list
-task.spawn(function()
-	while true do
-		if Window.Visible then
-			local stockList = GetSeedStockList()
-			for name in pairs(stockList) do
-				if SelectedSeeds[name] == nil then
-					SelectedSeeds[name] = false
-					Window:Checkbox({
-						Label = name,
-						Value = false,
-						Callback = function(_, v)
-							SelectedSeeds[name] = v
-						end
-					})
-				end
-			end
-		end
-		task.wait(3)
-	end
-end)
+-- UI Controls
+Window:Checkbox({ Label = "Beli semua seed", Value = BuyAllSeed, Callback = function(_, v)
+    BuyAllSeed = v
+    if v then BuySpecificSeed = false end
+    if v or BuySpecificSeed or BuyAllGear or BuySpecificGear then StartLoop() else StopLoop() end
+end })
 
--- Auto-buy loop
-task.spawn(function()
-	while true do
-		if AutoBuy then
-			if BuyAll then
-				BuyAllSeeds()
-			else
-				BuySelectedSeeds()
-			end
-		end
-		task.wait(3)
-	end
-end)
+Window:Checkbox({ Label = "Beli seed spesifik", Value = BuySpecificSeed, Callback = function(_, v)
+    BuySpecificSeed = v
+    if v then BuyAllSeed = false end
+    if v or BuyAllSeed or BuyAllGear or BuySpecificGear then StartLoop() else StopLoop() end
+end })
+
+Window:Button({ Text = "List seed", Callback = function()
+    ShowSeedList = not ShowSeedList
+end })
+
+Window:Separator({ Text = "Gear" })
+
+Window:Checkbox({ Label = "Beli semua gear", Value = BuyAllGear, Callback = function(_, v)
+    BuyAllGear = v
+    if v then BuySpecificGear = false end
+    if v or BuySpecificGear or BuyAllSeed or BuySpecificSeed then StartLoop() else StopLoop() end
+end })
+
+Window:Checkbox({ Label = "Beli gear spesifik", Value = BuySpecificGear, Callback = function(_, v)
+    BuySpecificGear = v
+    if v then BuyAllGear = false end
+    if v or BuyAllGear or BuyAllSeed or BuySpecificSeed then StartLoop() else StopLoop() end
+end })
+
+Window:Button({ Text = "List gear", Callback = function()
+    ShowGearList = not ShowGearList
+end })
+
+Window:Separator({ Text = "Log" })
+Window:List({ Items = LogMessages })
+
+-- Seed List UI
+coroutine.wrap(function()
+    while RunService.RenderStepped:Wait() do
+        if ShowSeedList then
+            local list = ImGui:Window({ Title = "Pilih Seed", Size = UDim2.fromOffset(250, 300) })
+            local seeds = GetStockList("Seed_Shop")
+            for name in pairs(seeds) do
+                SeedCheckboxes[name] = SeedCheckboxes[name] or false
+                list:Checkbox({ Label = name, Value = SeedCheckboxes[name], Callback = function(_, v)
+                    SeedCheckboxes[name] = v
+                end })
+            end
+            list:Button({ Text = "Tutup", Callback = function()
+                ShowSeedList = false
+            end })
+        end
+    end
+end)()
+
+-- Gear List UI
+coroutine.wrap(function()
+    while RunService.RenderStepped:Wait() do
+        if ShowGearList then
+            local list = ImGui:Window({ Title = "Pilih Gear", Size = UDim2.fromOffset(250, 300) })
+            local gears = GetStockList("Gear_Shop")
+            for name in pairs(gears) do
+                GearCheckboxes[name] = GearCheckboxes[name] or false
+                list:Checkbox({ Label = name, Value = GearCheckboxes[name], Callback = function(_, v)
+                    GearCheckboxes[name] = v
+                end })
+            end
+            list:Button({ Text = "Tutup", Callback = function()
+                ShowGearList = false
+            end })
+        end
+    end
+end)()
